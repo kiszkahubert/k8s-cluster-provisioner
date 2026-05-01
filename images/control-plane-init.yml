@@ -65,7 +65,13 @@ runcmd:
   - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   - sudo apt-get update
 
-  # installation of kubelet kubeadm
-  - sudo apt-get install -y kubelet kubeadm
-  - sudo apt-mark hold kubelet kubeadm
-  - sudo systemctl enable --now kubelet
+  # installation of kubelet kubeadm kubectl
+  - sudo apt-get install -y kubelet kubeadm kubectl
+  - sudo apt-mark hold kubelet kubeadm kubectl
+  
+  # sysprep
+  - sudo truncate -s 0 /etc/machine-id
+  - sudo rm /var/lib/dbus/machine-id
+  - sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
+  - sudo cloud-init clean
+  - sudo poweroff
