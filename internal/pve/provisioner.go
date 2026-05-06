@@ -20,6 +20,8 @@ type Config struct {
 	Cores      int
 	MemoryMB   int
 	DiskSizeGB uint64
+	CiUser     string
+	CiPassword string
 }
 
 type Provisioner struct {
@@ -91,6 +93,8 @@ func (p *Provisioner) ProvisionVM(ctx context.Context, node string) (uint, error
 	configTask, err := vm.Config(ctx,
 		proxmox.VirtualMachineOption{Name: "cores", Value: p.cfg.Cores},
 		proxmox.VirtualMachineOption{Name: "memory", Value: p.cfg.MemoryMB},
+		proxmox.VirtualMachineOption{Name: "ciuser", Value: p.cfg.CiUser},
+		proxmox.VirtualMachineOption{Name: "cipassword", Value: p.cfg.CiPassword},
 	)
 	if err != nil {
 		return 0, err

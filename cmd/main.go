@@ -10,7 +10,7 @@ import (
 
 func main() {
 	p, err := pve.New(pve.Config{
-		Host:       "192.168.122.243:8006",
+		Host:       "192.168.122.147:8006",
 		User:       "root@pam",
 		Password:   "kiszka123",
 		TemplateID: 9000,
@@ -18,6 +18,8 @@ func main() {
 		Cores:      2,
 		MemoryMB:   2048,
 		DiskSizeGB: 20,
+		CiUser:     "kiszka",
+		CiPassword: "kiszka123",
 	})
 	if err != nil {
 		log.Fatal(err)
