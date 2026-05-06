@@ -7,8 +7,15 @@ packages:
   - apt-transport-http
   - ca-certificates
   - gnupg
+  - qemu-guest-agent
 
 runcmd:
+  # prep for ansible - not ideal but hard to automize in different way
+  - echo "%sudo ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-cloud-init-users
+  - chmod 0440 /etc/sudoers.d/90-cloud-init-users
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+
   - echo "alias k=kubectl" >> ~/.bashrc
   
   # containerd installation
@@ -68,6 +75,7 @@ runcmd:
   # installation of kubelet kubeadm kubectl
   - sudo apt-get install -y kubelet kubeadm kubectl
   - sudo apt-mark hold kubelet kubeadm kubectl
+  - systemctl enable kubelet
   
   # sysprep
   - sudo truncate -s 0 /etc/machine-id

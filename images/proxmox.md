@@ -21,6 +21,8 @@ qm set 9000 --cicustom "user=local:snippets/base-image-init.yml"
 
 qm resize 9000 scsi0 +7G
 
+qm start 9000
+
 qm set 9000 --delete cicustom
 
 qm template 9000

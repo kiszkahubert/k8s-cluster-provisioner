@@ -95,6 +95,7 @@ func (p *Provisioner) ProvisionVM(ctx context.Context, node string) (uint, error
 		proxmox.VirtualMachineOption{Name: "memory", Value: p.cfg.MemoryMB},
 		proxmox.VirtualMachineOption{Name: "ciuser", Value: p.cfg.CiUser},
 		proxmox.VirtualMachineOption{Name: "cipassword", Value: p.cfg.CiPassword},
+		proxmox.VirtualMachineOption{Name: "protection", Value: 0},
 	)
 	if err != nil {
 		return 0, err
@@ -113,7 +114,14 @@ func (p *Provisioner) ProvisionVM(ctx context.Context, node string) (uint, error
 			return 0, err
 		}
 	}
-
+	startTask, err := vm.Start(ctx)
+	if err != nil {
+		return 0, err
+	}
+	err = waitTask(ctx, startTask)
+	if err != nil {
+		return 0, err
+	}
 	return vmid, nil
 }
 
