@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 
@@ -43,6 +44,7 @@ func main() {
 		CiUser:       "kiszka",
 		CiPassword:   "kiszka123",
 	}
+	sshKey := getSSHPubKey()
 	var vmsToCreate []pve.VMSpec
 	for i := 1; i <= form.CPCount; i++ {
 		vmsToCreate = append(vmsToCreate, pve.VMSpec{
@@ -52,6 +54,7 @@ func main() {
 			DiskSizeGB: 20,
 			CiUser:     form.CiUser,
 			CiPassword: form.CiPassword,
+			SSHKey:     sshKey,
 		})
 	}
 	for i := 1; i <= form.WorkerCount; i++ {
@@ -62,6 +65,7 @@ func main() {
 			DiskSizeGB: 30,
 			CiUser:     form.CiUser,
 			CiPassword: form.CiPassword,
+			SSHKey:     sshKey,
 		})
 	}
 	ctx := context.Background()
@@ -101,4 +105,12 @@ func main() {
 	}
 
 	fmt.Println("inventory.ini created")
+}
+
+func getSSHPubKey() string {
+	homeDir, _ := os.UserHomeDir()
+	keyPath := homeDir + "/.ssh/id_ed25519.pub"
+	keyBytes, _ := os.ReadFile(keyPath)
+	rawKey := strings.TrimSpace(string(keyBytes))
+	return strings.ReplaceAll(url.QueryEscape(rawKey), "+", "%20")
 }

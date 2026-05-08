@@ -1,0 +1,209 @@
+- name: Bootstrap First Control Plane Node
+  hosts: control_plane[0]
+  become: yes
+  vars:
+    vip_address: "192.168.122.200"
+  tasks:
+    - name: Create directory for static pods manifests
+      file:
+        path: /etc/kubernetes/manifests
+        state: directory
+        mode: '0755'
+
+    #Important workaround, without it kubeadm will crash
+    - name: Temporarily assign VIP address to interface
+      command:
+        ip addr add {{ vip_address }}/32 dev {{ ansible_default_ipv4.interface }}
+      ignore_errors: yes
+
+    - name: Generate kube-vip manifest
+      template:
+        src: kube-vip.yaml.j2
+        dest: /etc/kubernetes/manifests/kube-vip.yaml
+        mode: '0600'
+
+    - name: Generate kubeadm config
+      copy:
+        dest: /tmp/kubeadm-config.yaml
+        content: |
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: InitConfiguration
+          localAPIEndpoint:
+            advertiseAddress: "{{ ansible_host }}"
+            bindPort: 6443
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: ClusterConfiguration
+          controlPlaneEndpoint: "{{ vip_address }}:6443"
+
+    - name: Kubeadm cluster init
+      command: kubeadm init --config /tmp/kubeadm-config.yaml --upload-certs
+      register: kubeadm_output
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Show kubeadm logs
+      debug:
+        msg: "{{ kubeadm_output.stdout_lines }}"
+      when: kubeadm_output.changed
+
+    - name: Get certificate key
+      set_fact:
+        certificate_key: >-
+          {{ kubeadm_output.stdout
+             | regex_search('--certificate-key ([a-f0-9]+)', '\1')
+             | first }}
+      when: kubeadm_output.changed
+
+    - name: Generate join command
+      command: kubeadm token create --print-join-command
+      register: join_command_output
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Save join command
+      add_host:
+        name: join_facts_holder
+        cp_join: "{{ join_command_output.stdout | trim }} --control-plane --certificate-key {{ certificate_key }}"
+        worker_join: "{{ join_command_output.stdout | trim }}"
+
+    - name: Configure kubectl for user
+      block:
+        - name: Create dir .kube
+          file:
+            path: "/home/{{ ansible_user }}/.kube"
+            state: directory
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: '0755'
+
+        - name: Copy admin.conf
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "/home/{{ ansible_user }}/.kube/config"
+            remote_src: yes
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: '0600'
+
+    - name: Save kubeconfig locally
+      fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: ./admin.conf
+        flat: yes
+
+    - name: Cilium CNI prep
+      shell: |
+        CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+        CLI_ARCH=$(dpkg --print-architecture)
+        curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz
+        tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+        rm cilium-linux-${CLI_ARCH}.tar.gz
+      args:
+        creates: /usr/local/bin/cilium
+
+    - name: Cilium CNI installation
+      shell: cilium install
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        creates: /etc/cni/net.d/05-cilium.conflist
+
+    - name: Waiting for first node to be ready
+      shell: kubectl get nodes {{ ansible_hostname }} -o jsonpath='{.status.conditions[-1].type}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_ready
+      until: node_ready.stdout == "Ready"
+      retries: 20
+      delay: 15
+
+- name: Join remaining Control Plane nodes
+  hosts: control_plane[1:]
+  become: yes
+  vars:
+    vip_address: "192.168.122.200"
+  tasks:
+    - name: Create directory for static pods manifests
+      file:
+        path: /etc/kubernetes/manifests
+        state: directory
+        mode: '0755'
+
+    - name: Generate kube-vip manifest
+      template:
+        src: kube-vip.yaml.j2
+        dest: /etc/kubernetes/manifests/kube-vip.yaml
+        mode: '0600'
+
+    - name: Join cluster as a control plane
+      command: "{{ hostvars['join_facts_holder']['cp_join'] }}"
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Configure kubectl for user
+      block:
+        - name: Create dir .kube
+          file:
+            path: "/home/{{ ansible_user }}/.kube"
+            state: directory
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: '0755'
+
+        - name: Copy admin.conf
+          copy:
+            src: /etc/kubernetes/admin.conf
+            dest: "/home/{{ ansible_user }}/.kube/config"
+            remote_src: yes
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: '0600'
+
+- name: Join Worker nodes
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Join worker node to cluster
+      command: "{{ hostvars['join_facts_holder']['worker_join'] }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+- name: Wait for all nodes and install cluster add-ons
+  hosts: control_plane[0]
+  become: yes
+  tasks:
+    - name: Wait for all nodes to have status Ready
+      shell: |
+        kubectl get nodes --no-headers \
+          | awk '{print $2}' \
+          | grep -v "^Ready$" \
+          | wc -l
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: not_ready_count
+      until: not_ready_count.stdout | int == 0
+      retries: 30
+      delay: 20
+
+    - name: local-path provisioner installation
+      shell: kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.35/deploy/local-path-storage.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Waiting on local-path provisioner
+      shell: kubectl wait --for=condition=Available deployment/local-path-provisioner -n local-path-storage --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set local-path as a default storage class
+      shell: |
+        kubectl patch storageclass local-path \
+          -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Helm install
+      shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm

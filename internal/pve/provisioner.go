@@ -23,6 +23,7 @@ type VMSpec struct {
 	DiskSizeGB uint64
 	CiUser     string
 	CiPassword string
+	SSHKey     string
 }
 
 type Provisioner struct {
@@ -93,6 +94,7 @@ func (p *Provisioner) ProvisionVM(ctx context.Context, node string, spec VMSpec)
 		proxmox.VirtualMachineOption{Name: "memory", Value: spec.MemoryMB},
 		proxmox.VirtualMachineOption{Name: "ciuser", Value: spec.CiUser},
 		proxmox.VirtualMachineOption{Name: "cipassword", Value: spec.CiPassword},
+		proxmox.VirtualMachineOption{Name: "sshkeys", Value: spec.SSHKey},
 		proxmox.VirtualMachineOption{Name: "protection", Value: 0},
 	)
 	if err != nil {
