@@ -24,6 +24,7 @@ type VMSpec struct {
 	CiUser     string
 	CiPassword string
 	SSHKey     string
+	StaticIP   string
 }
 
 type Provisioner struct {
@@ -96,6 +97,7 @@ func (p *Provisioner) ProvisionVM(ctx context.Context, node string, spec VMSpec)
 		proxmox.VirtualMachineOption{Name: "cipassword", Value: spec.CiPassword},
 		proxmox.VirtualMachineOption{Name: "sshkeys", Value: spec.SSHKey},
 		proxmox.VirtualMachineOption{Name: "protection", Value: 0},
+		proxmox.VirtualMachineOption{Name: "ipconfig0", Value: fmt.Sprintf("ip=%s,gw=192.168.122.1", spec.StaticIP)},
 	)
 	if err != nil {
 		return 0, err

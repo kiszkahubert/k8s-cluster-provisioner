@@ -1,8 +1,8 @@
 - name: Bootstrap First Control Plane Node
   hosts: control_plane[0]
   become: yes
-  vars:
-    vip_address: "192.168.122.200"
+  vars_files:
+    - cluster_vars.yml
   tasks:
     - name: Create directory for static pods manifests
       file:
@@ -121,8 +121,8 @@
 - name: Join remaining Control Plane nodes
   hosts: control_plane[1:]
   become: yes
-  vars:
-    vip_address: "192.168.122.200"
+  vars_files:
+    - cluster_vars.yml
   tasks:
     - name: Create directory for static pods manifests
       file:
@@ -172,6 +172,8 @@
 - name: Wait for all nodes and install cluster add-ons
   hosts: control_plane[0]
   become: yes
+  vars_files:
+    - cluster_vars.yml
   tasks:
     - name: Wait for all nodes to have status Ready
       shell: |
@@ -207,3 +209,43 @@
       shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
         creates: /usr/local/bin/helm
+
+    - name: Install MetalLB
+      shell: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.15.3/config/manifests/metallb-native.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for MetalLB controller to be ready
+      shell: kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Configure MetalLB IP address pool
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: metallb.io/v1beta1
+        kind: IPAddressPool
+        metadata:
+          name: default-pool
+          namespace: metallb-system
+        spec:
+          addresses:
+          - {{ metallb_range }}
+        EOF
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Configure MetalLB L2 advertisement
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: metallb.io/v1beta1
+        kind: L2Advertisement
+        metadata:
+          name: default-l2
+          namespace: metallb-system
+        spec:
+          ipAddressPools:
+          - default-pool
+        EOF
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf

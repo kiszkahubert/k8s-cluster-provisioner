@@ -23,6 +23,12 @@ type ClusterForm struct {
 	CiPassword   string
 }
 
+type ClusterNetwork struct {
+	BaseIP  string
+	CPStart int
+	Gateway string
+}
+
 func main() {
 	p, err := pve.New(pve.ClientConfig{
 		Host:       "192.168.122.147:8006",
@@ -44,6 +50,15 @@ func main() {
 		CiUser:       "kiszka",
 		CiPassword:   "kiszka123",
 	}
+	network := ClusterNetwork{
+		BaseIP:  "192.168.122",
+		CPStart: 33,
+		Gateway: "192.168.122.1",
+	}
+	cpIPs, workerIPs, vip, metallbRange := allocateIPs(network, form.CPCount, form.WorkerCount)
+	fmt.Printf("VIP: %s\n", vip)
+	fmt.Printf("MetalLB pool: %s\n", metallbRange)
+
 	sshKey := getSSHPubKey()
 	var vmsToCreate []pve.VMSpec
 	for i := 1; i <= form.CPCount; i++ {
@@ -55,6 +70,7 @@ func main() {
 			CiUser:     form.CiUser,
 			CiPassword: form.CiPassword,
 			SSHKey:     sshKey,
+			StaticIP:   cpIPs[i-1] + "/24",
 		})
 	}
 	for i := 1; i <= form.WorkerCount; i++ {
@@ -66,26 +82,19 @@ func main() {
 			CiUser:     form.CiUser,
 			CiPassword: form.CiPassword,
 			SSHKey:     sshKey,
+			StaticIP:   workerIPs[i-1] + "/24",
 		})
 	}
 	ctx := context.Background()
-	createdVMs := make(map[string]uint)
-	for _, spec := range vmsToCreate {
-		vmid, err := p.ProvisionVM(ctx, "pve", spec)
+	vmIPs := make(map[string]string)
+	allIPs := append(cpIPs, workerIPs...)
+	for i, spec := range vmsToCreate {
+		_, err := p.ProvisionVM(ctx, "pve", spec)
 		if err != nil {
 			log.Fatalf("Err creating %s: %v", spec.Name, err)
 		}
-		createdVMs[spec.Name] = vmid
-	}
-	// VMs IP address retrieval code as DHCP is used
-	vmIPs := make(map[string]string)
-	for name, vmid := range createdVMs {
-		ip, err := p.WaitForIP(ctx, "pve", vmid)
-		if err != nil {
-			log.Fatalf("Error retrieving IP for %s: %v", name, err)
-		}
-		fmt.Printf("%s's IP: %s\n", name, ip)
-		vmIPs[name] = ip
+		vmIPs[spec.Name] = allIPs[i]
+		fmt.Printf("%s's IP: %s\n", spec.Name, allIPs[i])
 	}
 	var cpSection, workerSection strings.Builder
 	cpSection.WriteString("[control_plane]\n")
@@ -103,7 +112,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error saving inventory.ini: %v", err)
 	}
-
+	varsContent := fmt.Sprintf("vip_address: %s\nmetallb_range: %s\n", vip, metallbRange)
+	err = os.WriteFile("../Ansible/cluster_vars.yml", []byte(varsContent), 0644)
+	if err != nil {
+		log.Fatalf("Error saving cluster_vars.yml: %v", err)
+	}
 	fmt.Println("inventory.ini created")
 }
 
@@ -113,4 +126,20 @@ func getSSHPubKey() string {
 	keyBytes, _ := os.ReadFile(keyPath)
 	rawKey := strings.TrimSpace(string(keyBytes))
 	return strings.ReplaceAll(url.QueryEscape(rawKey), "+", "%20")
+}
+
+func allocateIPs(net ClusterNetwork, cpCount, workerCount int) (cpIPs, workerIPs []string, vip string, metalLBRange string) {
+	offset := net.CPStart
+	for i := 0; i < cpCount; i++ {
+		cpIPs = append(cpIPs, fmt.Sprintf("%s.%d", net.BaseIP, offset+i))
+	}
+	offset += cpCount
+	for i := 0; i < workerCount; i++ {
+		workerIPs = append(workerIPs, fmt.Sprintf("%s.%d", net.BaseIP, offset+i))
+	}
+	offset += workerCount
+	vip = fmt.Sprintf("%s.%d", net.BaseIP, offset)
+	offset++
+	metalLBRange = fmt.Sprintf("%s.%d-%s.%d", net.BaseIP, offset, net.BaseIP, offset+19)
+	return
 }
